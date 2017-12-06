@@ -1,0 +1,12 @@
+Package: nrelutils
+Type: Package
+Title: Utility functions for NREL in R
+Version: 0.1.0
+Author: Ben Best
+Maintainer: Ben Best <ben@ecoquants.com>
+Description: This package is a set of utility functions in R for NREL analysis, 
+initially for use with https: //github.com/ecoquants/nrel-uses.
+License: MIT
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 6.0.1
