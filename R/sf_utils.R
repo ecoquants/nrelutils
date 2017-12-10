@@ -5,23 +5,21 @@
 #' @return wrapped sf object [0,360]. The geometry column gets renamed to geom.
 #' @export
 sf_wrap = function(x){ #
-  library(dplyr)
-  library(sf)
 
   fld_geom <- attr(x, "sf_column")
 
   if (fld_geom != "geom"){
     x[,"geom"] <- x[,fld_geom]
-    x <- st_set_geometry(x, "geom")
+    x <- sf::st_set_geometry(x, "geom")
   }
   x <- x %>%
-    st_transform(4326) %>%
-    mutate(
+    sf::st_transform(4326) %>%
+    dplyr::mutate(
       geom = (geom + c(360,90)) %% c(360) - c(0,90)) %>%
-    st_set_geometry("geom") %>%
-    st_set_crs(4326)
+    sf::st_set_geometry("geom") %>%
+    sf::st_set_crs(4326)
   if (fld_geom != "geom"){
-    x <- select(x, -one_of(fld_geom))
+    x <- dplyr::select(x, -one_of(fld_geom))
   }
   x
 }
@@ -33,21 +31,19 @@ sf_wrap = function(x){ #
 #' @return unwrapped sf object [-180,180] but could be outside range? (TODO: check!). The geometry column gets renamed to geom.
 #' @export
 sf_unwrap = function(x){
-  library(dplyr)
-  library(sf)
 
   if (fld_geom != "geom"){
     x[,"geom"] <- x[,fld_geom]
-    x <- st_set_geometry(x, "geom")
+    x <- sf::st_set_geometry(x, "geom")
   }
   x <- x %>%
-    st_transform(4326) %>%
-    mutate(
+    sf::st_transform(4326) %>%
+    dplyr::mutate(
       geom = (geom + c(360,90)) %% c(-360) - c(0,-360+90)) %>%
-    st_set_geometry("geom") %>%
-    st_set_crs(4326)
+    sf::st_set_geometry("geom") %>%
+    sf::st_set_crs(4326)
   if (fld_geom != "geom"){
-    x <- select(x, -one_of(fld_geom))
+    x <- dplyr::select(x, -one_of(fld_geom))
   }
   x
 }
@@ -63,8 +59,8 @@ sf_unwrap = function(x){
 #' in `b`.
 #' @export
 sf_intersects = function(a, b){
-  i <- st_intersects(a, b)
-  slice(a, which(sapply(i, length) > 0))
+  i <- sf::st_intersects(a, b)
+  dplyr::slice(a, which(sapply(i, length) > 0))
 }
 
 #' Wrap and intersect
@@ -77,43 +73,59 @@ sf_intersects = function(a, b){
 sf_wrap_intersection <- function(paths_str, y){
 
   # merge into single wrapped geojson for ease of use across territories
-  ply_geo <- glue("./{p$key}/_{p$key}_epsg4326.geojson")
+  ply_geo <- glue::glue("./{p$key}/_{p$key}_epsg4326.geojson")
   if (!file.exists(ply_geo)){
-    cat(glue("  Assembling: {ply_geo}"), "\n")
+    cat(glue::glue("  Assembling: {ply_geo}"), "\n")
 
-    paths_v <- str_split(paths_str, ";")[[1]]
+    paths_v <- stringr::str_split(paths_str, ";")[[1]]
     for (k in 1:length(paths_v)){ # k <- 2
 
       path <- paths_v[k]
-      cat(glue("    sf_wrap (& rbind): {basename(path)}"), "\n")
+      cat(glue::glue("    sf_wrap (& rbind): {basename(path)}"), "\n")
 
-      ply1 <- read_sf(path) %>%
-        sf_wrap()
+      ply1 <- sf::read_sf(path) %>%
+        sf_wrap() %>%
+        dplry::rename_all(tolower)
 
       if (k == 1){
         ply <- ply1
       } else {
         # TODO: add this exception to `prep_eval` fld in prep_params.csv and fxn to prep_layer_functions.R
         if (p$key == "wind" & basename(path) == "atlantic_coast_90mwindspeed_off.shp"){
-          ply1 <- ply1 %>% rename(GRIDCODE=WPC)
+          ply1 <- ply1 %>% dplyr::rename(gridcode=wpc)
         }
-        ply <- rbind(ply, ply1)
+
+        # assign missing fields in order to rbind
+        for (fld in setdiff(names(ply), names(ply1))){ # fld = setdiff(names(ply), names(ply1))[1]
+          ply1[[fld]] <- NA
+          class(ply1[[fld]]) <- class(ply[[fld]])
+        }
+        for (fld in setdiff(names(ply1), names(ply))){ # fld = setdiff(names(ply), names(ply1))[1]
+          ply[[fld]] <- NA
+          class(ply[[fld]]) <- class(ply1[[fld]])
+        }
+
+        # bind
+        ply <- sf::rbind(ply, ply1)
       }
+      #browser()
+      cat(glue::glue("      {length(names(ply))}: {paste(names(ply), collapse=',')}"),"\n")
     }
-    write_sf(ply, ply_geo)
+    #browser()
+    sf::write_sf(ply, ply_geo)
     # TODO: fix sf_wrap() to output sf_column geometry since automatic name for geojson
   }
-  cat(glue("    Reading: {ply_geo}"), "\n")
-  ply <- read_sf(ply_geo)
+  cat(glue::glue("    Reading: {basename(ply_geo)}"), "\n")
+  ply <- sf::read_sf(ply_geo)
 
   if (nrow(ply) == 0) return(ply)
 
-  cat(glue("    Intersecting({ply_geo}, y)"), "\n")
+  cat(glue::glue("    Intersecting: {basename(ply_geo)}"), "\n")
   ply  %>%
-    sf_intersects(y) %>%
-    st_make_valid() %>%
-    st_intersection(y) %>%
-    mutate(
+    sf::sf_intersects(y) %>%
+    sf::st_make_valid() %>%
+    sf::st_intersection(y) %>%
+    dplyr::mutate(
       one = 1,
       geometry = st_cast(geometry, "MULTIPOLYGON"))
 }
@@ -127,10 +139,10 @@ sf_wrap_intersection <- function(paths_str, y){
 ply_map <- function(ply, fld_color="layer"){
   library(leaflet)
 
-  m <- leaflet(
-    options = leafletOptions(worldCopyJump=T)) %>%
-    addProviderTiles(providers$Esri.OceanBasemap, group="Color") %>%
-    addProviderTiles(providers$Stamen.TonerLite, group="B&W")
+  m <- leaflet::leaflet(
+    options = leaflet::leafletOptions(worldCopyJump=T)) %>%
+    leaflet::addProviderTiles(leaflet::providers$Esri.OceanBasemap, group="Color") %>%
+    leaflet::addProviderTiles(leaflet::providers$Stamen.TonerLite, group="B&W")
 
   layers <- sort(unique(ply[[fld_color]]))
   v_i <- 1:length(layers)
@@ -139,14 +151,14 @@ ply_map <- function(ply, fld_color="layer"){
     lyr <- layers[i]
 
     m <- m %>%
-      addPolygons(
+      leaflet::addPolygons(
         data = filter_at(ply, fld_color, any_vars(. == lyr)),
         color = pal(i), group = lyr)
   }
 
   m %>%
-    addLegend(colors = pal(v_i), labels = layers, position = "bottomright") %>%
-    addLayersControl(
+    leaflet::addLegend(colors = pal(v_i), labels = layers, position = "bottomright") %>%
+    leaflet::addLayersControl(
       baseGroups = c("B&W", "Color"),
       overlayGroups = layers)
 }

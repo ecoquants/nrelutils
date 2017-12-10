@@ -5,7 +5,7 @@
 #' @return wrapped raster [0, 360]
 #' @export
 raster_wrap = function(r){
-  shift(rotate(shift(r, 180)), 180)
+  raster::shift(raster::rotate(raster::shift(r, 180)), 180)
 }
 
 #' Unwrap raster [0,360] to [-180,180]
@@ -15,7 +15,7 @@ raster_wrap = function(r){
 #' @return unwrapped raster
 #' @export
 raster_unwrap = function(r){
-  shift(r, -360)
+  raster::shift(r, -360)
 }
 
 #' Clip raster with crop & mask
@@ -26,8 +26,8 @@ raster_unwrap = function(r){
 #' @return raster x with crop(x, y) and mask(x, y)
 #' @export
 raster_clip <- function(x, y){
-  x <- crop(x, y)
-  x <- mask(x, y)
+  x <- raster::crop(x, y)
+  x <- raster::mask(x, y)
   x
 }
 
@@ -41,23 +41,23 @@ raster_clip <- function(x, y){
 r_map <- function(r, aggregate_factor=10){
   # [Raster over international date line · Issue #225 · rstudio/leaflet](https://github.com/rstudio/leaflet/issues/225#issuecomment-347721709)
 
-  da <- aggregate(r, fact=aggregate_factor) # plot(da); lines(eez_wgcs_sp)
+  da <- raster::aggregate(r, fact=aggregate_factor) # plot(da); lines(eez_wgcs_sp)
   b  <- raster_unwrap(da)
-  b1 <- crop(b, extent(-180, 180,-90,90), snap="in") %>% trim()
-  b2 <- crop(b, extent(-360,-180,-90,90), snap="in") %>% shift(360) %>% trim()
+  b1 <- raster::crop(b, raster::extent(-180, 180,-90,90), snap="in") %>% raster::trim()
+  b2 <- raster::crop(b, raster::extent(-360,-180,-90,90), snap="in") %>% raster::shift(360) %>% raster::trim()
 
   # get bounding box on bigger raster
-  xr1 = extent(b1) %>% as.vector() %>% .[1:2] %>% diff()
-  xr2 = extent(b2) %>% as.vector() %>% .[1:2] %>% diff()
-  bb = c(extent(b1), extent(b2))[[which.max(c(xr1,xr2))]]
+  xr1 = raster::extent(b1) %>% as.vector() %>% .[1:2] %>% diff()
+  xr2 = raster::extent(b2) %>% as.vector() %>% .[1:2] %>% diff()
+  bb = c(raster::extent(b1), raster::extent(b2))[[which.max(c(xr1,xr2))]]
 
-  leaflet(options=leafletOptions(worldCopyJump=T)) %>%
-    addProviderTiles("Stamen.TonerLite", group = "B&W") %>%
-    addRasterImage(b1) %>%
-    addRasterImage(b2) %>%
-    addGraticule() %>% # interval=1
-    addScaleBar() %>%
-    fitBounds(bb@xmin, bb@ymin, bb@xmax, bb@ymax)
+  leaflet::leaflet(options=leafletOptions(worldCopyJump=T)) %>%
+    leaflet::addProviderTiles("Stamen.TonerLite", group = "B&W") %>%
+    leaflet::addRasterImage(b1) %>%
+    leaflet::addRasterImage(b2) %>%
+    leaflet::addGraticule() %>% # interval=1
+    leaflet::addScaleBar() %>%
+    leaflet::fitBounds(bb@xmin, bb@ymin, bb@xmax, bb@ymax)
 }
 
 #' Polygons (ply) to raster(s) on filesystem (tif)
@@ -72,11 +72,6 @@ r_map <- function(r, aggregate_factor=10){
 #' @return return leaflet map
 #' @export
 ply_to_tifs <- function(x, y, ter, key, field="one", by=NA, sfx="epsg4326.tif"){
-  library(raster)
-  library(fasterize)
-  library(sf)
-  library(glue)
-  library(readr)
 
   dir.create(key, showWarnings=F)
   pfx <- glue("{ter}_{key}")
@@ -84,23 +79,25 @@ ply_to_tifs <- function(x, y, ter, key, field="one", by=NA, sfx="epsg4326.tif"){
   if (is.na(by)) by=NULL
 
   if (nrow(x) == 0){
-    write_lines("0", digest_txt)
+    readr::write_lines("0", digest_txt)
     return(NULL)
   }
 
-  r <- fasterize(x, y, field=field, fun="first", by=by)
+  r <- fasterize::fasterize(x, y, field=field, fun="first", by=by)
 
   if (!is.null(by)){
     tifs <- glue("{pfx}_{names(r)}_{sfx}")
-    for (i in 1:length(tifs)){ # i <- 1
-      lyr <- names(r)
-      writeRaster(raster(r, lyr), file.path(key, tifs[i]), overwrite=T) # hapc_b[[lyr]] # plot(raster(hapc_b, lyr))
+    for (i in 1:length(tifs)){ # i <- 2
+      lyr <- names(r)[i]
+      cat(glue::glue("    Writing: {tifs[i]}"), "\n")
+      raster::writeRaster(raster(r, lyr), file.path(key, tifs[i]), overwrite=T) # r[[lyr]] # plot(raster(r, lyr))
     }
-    write_lines(glue("{names(r)}:{tifs}"), digest_txt)
+    write_lines(glue::glue("{names(r)}:{tifs}"), digest_txt)
   } else {
-    tif <- glue("{pfx}_{sfx}")
-    writeRaster(r, file.path(key, tif), overwrite=T)
-    write_lines(glue("{key}:{tif}"), digest_txt)
+    tif <- glue::glue("{pfx}_{sfx}")
+    cat(glue::glue("    Writing: {tif}"))
+    raster::writeRaster(r, file.path(key, tif), overwrite=T)
+    readr::write_lines(glue("{key}:{tif}"), digest_txt)
   }
 }
 
