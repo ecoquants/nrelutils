@@ -65,27 +65,44 @@ sf_intersects = function(a, b){
 
 #' Wrap and intersect
 #'
-#' @param paths_str character. colon `;` seperated paths to sf readable data (shp, gdb, geojson, etc)
-#' @param y sf object to intersect
+#' @param x sf object to intersect, eg layer
+#' @param y sf object to intersect, eg eez
 #'
 #' @return wrapped and intersected sf object with a one field as a valid MULTIPOLYGON
 #' @export
-sf_wrap_intersection <- function(paths_str, y){
+sf_wrap_intersection <- function(x, y){
 
   # merge into single wrapped geojson for ease of use across territories
-  ply_geo <- glue::glue("./{p$key}/_{p$key}_epsg4326.geojson")
+  if (nrow(x) == 0) return(x)
+
+  cat(glue::glue("    Intersecting"), "\n")
+  x %>%
+    sf_intersects(y) %>%
+    sf::st_make_valid() %>%
+    sf::st_intersection(y) %>%
+    dplyr::mutate(
+      one = 1,
+      geometry = st_cast(geometry, "MULTIPOLYGON"))
+}
+
+sf_lyr_ply <- function(lyr_p){
+
+  lyr      <- lyr_p$key
+  lyr_info <- get_lyr_info(lyr)
+  ply_geo  <- glue::glue("{dir_prep_data}/{lyr}/_{lyr}_epsg4326.geojson")
+
   if (!file.exists(ply_geo)){
     cat(glue::glue("  Assembling: {ply_geo}"), "\n")
 
-    paths_v <- stringr::str_split(paths_str, ";")[[1]]
-    for (k in 1:length(paths_v)){ # k <- 2
+    paths <- stringr::str_split(lyr_p$paths, ";")[[1]]
+    for (k in 1:length(paths)){ # k <- 2
 
-      path <- paths_v[k]
+      path <- paths[k]
       cat(glue::glue("    sf_wrap (& rbind): {basename(path)}"), "\n")
 
       ply1 <- sf::read_sf(path) %>%
         sf_wrap() %>%
-        dplry::rename_all(tolower)
+        dplyr::rename_all(tolower)
 
       if (k == 1){
         ply <- ply1
@@ -115,19 +132,9 @@ sf_wrap_intersection <- function(paths_str, y){
     sf::write_sf(ply, ply_geo)
     # TODO: fix sf_wrap() to output sf_column geometry since automatic name for geojson
   }
-  cat(glue::glue("    Reading: {basename(ply_geo)}"), "\n")
+  #cat(glue::glue("    Reading: {basename(ply_geo)}"), "\n")
   ply <- sf::read_sf(ply_geo)
-
-  if (nrow(ply) == 0) return(ply)
-
-  cat(glue::glue("    Intersecting: {basename(ply_geo)}"), "\n")
-  ply  %>%
-    sf::sf_intersects(y) %>%
-    sf::st_make_valid() %>%
-    sf::st_intersection(y) %>%
-    dplyr::mutate(
-      one = 1,
-      geometry = st_cast(geometry, "MULTIPOLYGON"))
+  ply
 }
 
 #' Quick map of polygon layers

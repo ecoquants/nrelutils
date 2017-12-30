@@ -71,15 +71,19 @@ r_map <- function(r, aggregate_factor=10){
 #'
 #' @return return leaflet map
 #' @export
-ply_to_tifs <- function(x, y, ter, key, field="one", by=NA, sfx="epsg4326.tif"){
-
-  dir.create(key, showWarnings=F)
-  pfx <- glue("{ter}_{key}")
+ply_to_tifs <- function(x, y, ter, lyr, field="one", by=NA, sfx="epsg4326.tif"){
+  
+  #x=ply; y=ter_depth_wgcs_r; ter; key=lyr; field=lyr_p$field; by=lyr_p$by; sfx="epsg4326.tif"
+  dir_lyr <- glue::glue("{dir_prep_data}/{lyr}")
+  dir.create(lyr, showWarnings=F)
+  pfx <- glue::glue("{ter}_{lyr}")
+  lyr_info <- get_lyr_info(lyr)
 
   if (is.na(by)) by=NULL
 
   if (nrow(x) == 0){
-    readr::write_lines("0", digest_txt)
+    lyr_info$territories[[ter]] <- NA
+    set_lyr_info(lyr_info)
     return(NULL)
   }
 
@@ -87,17 +91,23 @@ ply_to_tifs <- function(x, y, ter, key, field="one", by=NA, sfx="epsg4326.tif"){
 
   if (!is.null(by)){
     tifs <- glue("{pfx}_{names(r)}_{sfx}")
-    for (i in 1:length(tifs)){ # i <- 2
-      lyr <- names(r)[i]
+    for (i in 1:length(tifs)){ # i <- 3
+      component <- names(r)[i]
       cat(glue::glue("    Writing: {tifs[i]}"), "\n")
-      raster::writeRaster(raster(r, lyr), file.path(key, tifs[i]), overwrite=T) # r[[lyr]] # plot(raster(r, lyr))
+      
+      raster::writeRaster(raster(r, component), file.path(dir_lyr, tifs[i]), overwrite=T) # r[[lyr]] # plot(raster(r, lyr))
     }
-    write_lines(glue::glue("{names(r)}:{tifs}"), digest_txt)
+    
+    lyr_info$territories[[ter]]$components <- setNames(tifs, names(r)) %>% as.list()
+    set_lyr_info(lyr_info)
   } else {
     tif <- glue::glue("{pfx}_{sfx}")
     cat(glue::glue("    Writing: {tif}"))
-    raster::writeRaster(r, file.path(key, tif), overwrite=T)
-    readr::write_lines(glue("{key}:{tif}"), digest_txt)
+    
+    raster::writeRaster(r, file.path(dir_lyr, tif), overwrite=T)
+    
+    lyr_info$territories[[ter]]$components <- setNames(tif, lyr) %>% as.list()
+    set_lyr_info(lyr_info)
   }
 }
 
