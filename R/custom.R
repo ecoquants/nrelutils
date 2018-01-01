@@ -46,49 +46,50 @@ get_ter_depth_wgcs_r <- function(ter){
   ter_depth_wgcs # plot(ter_depth_wgcs)
 }
 
-ter_stack <- function(ter, lyr_params, dir_data=here::here("prep/data"), debug=F){
+ter_stack <- function(ter, lyr_params){
   # ter = "West"; params_csv = "./prep_params.csv"
 
-  keys <- sort(lyr_params$key)
+  lyrs        <- sort(lyr_params$key)
+  lyrs_in_ter <- setNames(rep(NA, length(lyrs)), lyrs) %>% as.list()
 
-  #if (exists("s")) rm(s)
-  i_key = 0
-  for (key in keys){ # key <- "mpa" # keys[1] "efh" mpa" "wind"
-    if (debug) cat(glue::glue("{key}"),"\n")
-    digest_txt <- glue::glue("{dir_data}/{key}/{ter}_{key}_epsg4326.txt")
+  if (exists("s_ter", inherits=F)) rm(s_ter)
+  for (lyr in lyrs){ # lyr = "aquaculture" # "wind" # key <- "mpa" # keys[1] "efh" mpa" "wind"
+    lyr_info_yml <- glue::glue("{dir_prep_data}/{lyr}/_{lyr}.yml")
+    lyr_info     <- yaml::read_yaml(lyr_info_yml)
 
-    if (suppressMessages(readr::read_lines(digest_txt)[1]) == "0"){
-      if (debug) msg("  0, skipping")
+    # skip if layer not in territory
+    if (is.na(lyr_info$territories[[ter]])){
       next
     }
-    i_key = i_key + 1
 
-    df <- suppressMessages(readr::read_delim(digest_txt, ":", col_names = c("name","path"))) %>%
-      dplyr::mutate(
-        name = ifelse(name == key, name, glue::glue("{key}_{name}")),
-        #name = glue("{key}_{name}"),
-        path = glue::glue("{dir_data}/{key}/{path}"))
-    s1 <- raster::stack(as.list(df$path))
-    names(s1) <- df$name
-
-    if (debug) cat(" ", paste0(df$name, collapse="\n  "),"\n")
-
-    if (i_key == 1){
-      sA <- s1
+    # get raster stack of layer components
+    lyrs_in_ter[[lyr]] <- names(lyr_info$territories[[ter]]$components)
+    tifs               <- purrr::map_chr(
+      lyr_info$territories[[ter]]$components,
+      ~glue::glue("{dir_prep_data}/{lyr}/{.x[1]}"))
+    s_lyr              <- raster::stack(tifs)
+    if (length(lyrs_in_ter[[lyr]]) == 1 && lyr == lyrs_in_ter[[lyr]]){
+      names(s_lyr) <- lyr
     } else {
-      if (!raster::compareRaster(sA, s1, stopiffalse=F)){
-        stop(glue::glue("WHOAH! {key} has diff't raster size/origin/extent/resolution/projection!"))
-        #next() # browser()
-      }
-      sA <- raster::stack(sA, s1)
+      names(s_lyr) <- glue::glue("{lyr}_{lyrs_in_ter[[lyr]]}")
+    }
+
+    # add layer stack to territory stack
+    if (!exists("s_ter", inherits=F)){
+      s_ter <- s_lyr
+    } else {
+      s_ter <- raster::stack(s_ter, s_lyr)
     }
   }
 
-  # add area
-  sA <- raster::stack(sA, raster::area(sA))
-  names(sA)[raster::nlayers(sA)] <- "area_km2"
+  # add area to territory stack
+  s_ter <- raster::stack(s_ter, raster::area(s_ter))
+  names(s_ter)[raster::nlayers(s_ter)] <- "areakm2"
+  lyrs_in_ter$areakm2 <- "areakm2"
 
-  sA
+  # add attribute of layers in territory stack
+  attr(s_ter, "lyrs_in_ter") <- lyrs_in_ter
+  s_ter
 }
 
 ter_stack_tbl <- function(s){
@@ -139,25 +140,25 @@ ter_bin_lyr_smry <- function(tbl_b){
     #  bin = as.character(bin)) %>%
     dplyr::group_by(bin) %>%
     dplyr::summarise(
-      area_km2 = sum(area_km2))
+      areakm2 = sum(areakm2))
   dt <- dt %>%
     tibble::add_row(
       bin      = "Total",
-      area_km2 = sum(dt$area_km2)) %>%
-    tidyr::spread(bin, area_km2)
+      areakm2 = sum(dt$areakm2)) %>%
+    tidyr::spread(bin, areakm2)
   dt <- tibble::tibble(
     layer = " Total Area") %>%
     dplyr::bind_cols(dt)
   dt$rank <- 0
 
-  # dl: layer x bin = area_km2
+  # dl: layer x bin = areakm2
   dl <- tbl_b %>%
-    tidyr::gather(key = layer, value = value, -bin, -area_km2) %>%
+    tidyr::gather(key = layer, value = value, -bin, -areakm2) %>%
     dplyr::filter(!is.na(value)) %>%
     dplyr::group_by(layer, bin) %>%
     dplyr::summarise(
-      area_km2 = sum(area_km2)) %>%
-    tidyr::spread(bin, area_km2) %>%
+      areakm2 = sum(areakm2)) %>%
+    tidyr::spread(bin, areakm2) %>%
     dplyr::ungroup()
   dl$Total <- rowSums(dl[,-1], na.rm = TRUE)
 
@@ -187,8 +188,10 @@ svg_bar <- function(pct, val){
   # <text text-anchor="end" x="100%" y="11" font-family="Courier New" font-size="14px" color="black">{val}</text>
 }
 
-ter_bin_lyr_smry_plus <- function(ter_bin_lyr_csv, lyr_params, lyr_categories){
+ter_bin_lyr_smry_plus <- function(ter, bin, lyr_params, lyr_categories){
 
+  ter_info <- get_ter_info(ter)
+  ter_bin_lyr_csv <- ter_info[[bin]]$count$layers_csv
   tbl_bls <- suppressMessages(read_csv(ter_bin_lyr_csv, trim_ws=F))
   bins <- tbl_bls %>%
     select(-one_of(c("layer","rank"))) %>%
@@ -305,12 +308,12 @@ print_ter_bin_lyr_smry_plus <- function(tbl_blsp){
 
 ter_bin_cnt <- function(tbl_b){
   # table for cumulative count plot
-  cols_tally <- setdiff(names(tbl_b), c(names(nrel_limits), "bin", "vals", "area_km2"))
+  cols_tally <- setdiff(names(tbl_b), c(names(nrel_limits), "bin", "vals", "areakm2"))
   tbl_b$tally <- apply(tbl_b[, cols_tally], 1, function(x) sum(!is.na(x)))
   tbl_b <- tbl_b %>%
     dplyr::group_by(bin, tally) %>%
     dplyr::summarise(
-      area_km2 = sum(area_km2)) #%>%
+      areakm2 = sum(areakm2)) #%>%
     #filter(tally>0) # View(tbl_df2)
 
   lyrs_rm <- c(names(nrel_limits), "vals")
@@ -322,12 +325,15 @@ plot_caption_ter_bin_cnt <- function(ter, bin_html){
   glue::glue("Area of Cumulative Ocean Use by {bin_html} for {ter} region. Cumulative use are counted and summarized by {bin_html} and area.")
 }
 
-plot_ter_bin_cnt <- function(ter_bin_cnt_csv, bin_html){
+plot_ter_bin_cnt <- function(ter, bin){
+  
   fmt <- get_fmt()
+  ter_info <- get_ter_info(ter)
+  ter_bin_cnt_csv <- ter_info[[bin]]$count$cumulative_csv
   tbl_bc  <- suppressMessages(read_csv(ter_bin_cnt_csv, trim_ws=F))
   tbl_bc$bin <- with(tbl_bc, factor(bin, unique(bin), ordered=T))
 
-  g <- ggplot(data = tbl_bc, aes(x = bin, y = area_km2, fill = tally)) +
+  g <- ggplot(data = tbl_bc, aes(x = bin, y = areakm2, fill = tally)) +
     geom_col() +
     scale_fill_distiller(palette = "Spectral", name="Count")
 
@@ -343,7 +349,7 @@ plot_ter_bin_cnt <- function(ter_bin_cnt_csv, bin_html){
 }
 
 ter_cnt_raster <- function(s){
-  lyrs_rm <- c(names(nrel_limits), "area_km2")
+  lyrs_rm <- c(names(nrel_limits), "areakm2")
   s_cnt   <- raster::dropLayer(s, which(names(s) %in% lyrs_rm))
   r_cnt   <- sum(!is.na(s_cnt), na.rm=T) %>%
     raster::mask(raster::raster(s, "depth"))
@@ -356,7 +362,7 @@ ter_cnt_raster <- function(s){
 ter_cnt_raster2 <- function(s){
   # TODO: use yaml for epsg4326:*.tif \n epsg3857:\n  big:*.tif\n  small:*.tif
   #ter_cnt_raster <- function(s){
-  lyrs_rm <- c(names(nrel_limits), "area_km2")
+  lyrs_rm <- c(names(nrel_limits), "areakm2")
   s_cnt   <- raster::dropLayer(s, which(names(s) %in% lyrs_rm))
   r_cnt   <- sum(!is.na(s_cnt), na.rm=T) %>%
     raster::mask(raster::raster(s, "depth"))
@@ -368,8 +374,9 @@ ter_cnt_raster2 <- function(s){
   r
 }
 
-map_caption_ter_cnt <- function(ter){
-  glue::glue("Map of cumulative ocean use in {ter} region.")
+map_ter_caption <- function(ter, type, element){
+  str_type <- ifelse(element == "count", "cumulative ocean use", glue::glue("viable {type}"))
+  glue::glue("Map of {str_type} in {ter} region.")
   # TODO: if ( fmt==html_document & length(info$) ),
   #         pan to other side of dateline to see rest of map
 }
@@ -382,19 +389,50 @@ map_caption_ter_cnt <- function(ter){
 #' @export
 #'
 #' @examples
-lmap_ter_cnt <- function(info){
-  b <- info$raster$epsg3857_init_bounds
-  r <- raster::raster(info$raster$epsg3857[1])
+lmap_ter <- function(ter, type, element){
+  # ter='East'; type='wind'; element='limits'
+
+  ter_info <- get_ter_info(ter)
+  el       <- ter_info[[type]][[element]]
+  b        <- el$epsg3857_extent_init
+  r        <- raster::raster(el$epsg3857_tif[1])
+  
+  # TODO: fix creation vs here
+  if (b[1] > 180){
+    b[1:2] = b[1:2] - 360
+  }
 
   vals <- getValues(r)
-  if (length(info$raster$epsg3857) == 2){
-    r2 <- raster::raster(info$raster$epsg3857[2])
+  if (length(el$epsg3857_tif) == 2){
+    r2 <- raster::raster(el$epsg3857_tif[2])
     vals <- c(vals, getValues(r2))
   }
-  pal <- colorNumeric(
-    palette = 'Spectral', na.color="#00000000",
-    reverse=T, domain = vals)
-
+  
+  if (element == "limits"){
+    # TODO: for limits project to leaflet without interpolation so integer
+    brk_labels <<- nrel_limits[[type]]$break_labels
+    legend_title <- stringr::str_to_title(type)
+    vals <- round(vals)
+    r    <- round(r)
+    if (length(el$epsg3857_tif) == 2){
+      r2 <- round(r2)
+    }
+    
+    pal_col <- ifelse(type == "depth", "Blues", "Greens")
+    pal <- leaflet::colorFactor(
+      palette = pal_col, 
+      domain = factor(round(vals), 1:length(brk_labels), brk_labels),
+      levels = 1:length(brk_labels),
+      na.color="#00000000", reverse=F)
+    
+  } else {
+    legend_title <- "Count"
+    
+    pal <- colorNumeric(
+      palette = 'Spectral', na.color="#00000000",
+      reverse=T, domain = vals)
+  }
+  
   m <- leaflet::leaflet(
     options=leafletOptions(worldCopyJump=T)) %>%
     #options=c(leafletOptions(), attributionControl=F, zoomControl=F, worldCopyJump=T)) %>%
@@ -402,7 +440,7 @@ lmap_ter_cnt <- function(info){
     leaflet::addProviderTiles(providers$Esri.OceanBasemap, group = "Ocean") %>%
     leaflet::addRasterImage(r, project=F, colors=pal, opacity=0.8, group="Count")
 
-  if (length(info$raster$epsg3857) == 2){
+  if (length(el$epsg3857_tif) == 2){
     m <- m %>%
       leaflet::addRasterImage(r2, project=F, colors=pal, opacity=0.8, group="Count")
   }
@@ -410,9 +448,21 @@ lmap_ter_cnt <- function(info){
   m <- m %>%
     leaflet::addGraticule() %>% # interval=1
     leaflet::addScaleBar("bottomleft") %>%
-    leaflet::addLegend("bottomright", pal, vals, opacity=0.8, title="Count") %>%
     leaflet::fitBounds(b[1], b[3], b[2], b[4]) %>%
     leaflet::addLayersControl(baseGroups = c("B&W", "Ocean"), overlayGroups=c("Count"))
+  
+  if (element == "limits"){
+    m <- m %>%
+      leaflet::addLegend(
+        "bottomright", 
+        colors = pal(1:length(brk_labels)),
+        labels = brk_labels,
+        opacity = 0.8, title = legend_title)
+    
+  } else {
+    m <- m %>%
+      leaflet::addLegend("bottomright", pal, vals, opacity=0.8, title=legend_title)
+  }
   m
 }
 
@@ -424,35 +474,56 @@ lmap_ter_cnt <- function(info){
 #' @export
 #'
 #' @examples
-gmap_ter_cnt <- function(info){
+gmap_ter <- function(ter, type, element){
+  # ter <- "Alaska"; type <- "depth"; element <- "limits"
+  #gmap_ter("Alaska", "depth", "limits")
+    # ter <- ; type <- "depth"; element <- 
+    
 
-  r       <- raster::raster(info$raster$epsg4326)
-  b       <- raster::extent(r) %>% as.vector()
-  bb      <- extent(r) %>% as("SpatialPolygons") %>% fortify()
-  world2  <- ggplot2::map_data("world2")
+  ter_info <- get_ter_info(ter)
+  el       <- ter_info[[type]][[element]]
+  # devtools::load_all("~/github/nrelutils") 
+  r        <- raster::raster(el$epsg4326_tif) %>% raster_trim()
+  b        <- raster::extent(r) %>% as.vector()
+  bb       <- extent(r) %>% as("SpatialPolygons") %>% fortify()
+  world2   <- ggplot2::map_data("world2")
 
-  # TODO: contour raster to ggplot2?
-  #r_depth <- raster::raster(here(glue("prep/data/depth/{ter}_depth_epsg4326.tif")))
-  #max(nrel_limits$depth$breaks)
-  # contourplot(r_depth, at=max(nrel_limits$depth$breaks), labels=F, lwd=0.4, col="gray", lwd=0.1)
-
-  #browser()
-  # TODO: rnaturalearth world, clip to USA EEZ, burn Great Lakes
-  # TODO: depth
   p <- rasterVis::gplot(r) +
     ggplot2::geom_polygon(
       data = world2, aes(x=long, y=lat, group=group),
       color = "black", fill = "darkgray", size=0.2) +
-    ggplot2::geom_tile(aes(fill=value), alpha=0.8) +
-    ggplot2::scale_fill_distiller(
-      palette = "Spectral", name = "Count", direction = -1, na.value = NA) +
     ggplot2::labs(x = "Longitude", y = "Latitude") +
+    ggsn::scalebar(
+      data = bb, location="bottomleft", dist=100, dd2km=T, model="WGS84", st.size=1) +
     ggplot2::coord_fixed(xlim = b[1:2],  ylim = b[3:4], ratio = 1) +
     ggplot2::theme_bw() +
     ggplot2::theme(
-      axis.title = element_text(size = ggplot2::rel(0.6))) +
-    ggsn::scalebar(
-      data = bb, location="bottomleft", dist=100, dd2km=T, model="WGS84", st.size=1)
+      axis.title = element_text(size = ggplot2::rel(0.6)))
+  
+  
+  # TODO: add units to legend_title
+  #if (type == "depth" & element == "limits") browser()
+  
+  if (element == "limits"){
+    brk_labels <<- nrel_limits[[type]]$break_labels
+    msg(g("        {type}: {paste(brk_labels, collapse=',')}"))
+    pal <- ifelse(type == "depth", "Blues", "Greens")
+    legend_title <- stringr::str_to_title(type)
+
+    p <- p +
+      ggplot2::geom_tile(aes(
+        fill=factor(value, levels=1:length(brk_labels), labels=brk_labels)), alpha=0.8) +
+      ggplot2::scale_fill_brewer(
+        palette = pal, name = legend_title, direction = 1, na.value = NA)
+  } else {
+    legend_title <- "Count"
+    
+    p <- p + 
+      ggplot2::geom_tile(aes(fill=value), alpha=0.8) +
+      ggplot2::scale_fill_distiller(
+        palette = "Spectral", name = legend_title, direction = -1, na.value = NA)
+  }
+
   print(p)
 }
 
@@ -466,40 +537,52 @@ get_fmt <- function(){
   fmt
 }
 
-map_ter <- function(ter_info_yml, type="cnt"){
+map_ter <- function(ter, type="all", element="count", redo_figs=F, return_null=F){
 
-  info  <- yaml::yaml.load_file(ter_cnt_yml)
-  fmt   <- get_fmt()
-  b     <- info$raster$epsg4326_bounds
-  dpi   <- 300
-  w     <- 6
-  h_max <- 8
-  h     <- min(c(h_max, diff(b[3:4])/diff(b[1:2])*w))
-  redo_figs <- F
+  msg(g("      {ter}_{type}_{element}_map.[png|pdf]"))
+  
+  ter_info  <- get_ter_info(ter)
+  
+  if (is.na(ter_info[[type]][1])) return(NULL)
+  
+  el <- ter_info[[type]][[element]]
 
-  ter_info <- get_ter_info(ter_info_yml, type)
+  map_pfx <- glue::glue("{dir_data}/territories/{ter}_{type}_{element}")
+  map_png <- glue::glue("{map_pfx}_map.png")
+  map_pdf <- glue::glue("{map_pfx}_map.pdf")
+  ter_info[[type]][[element]]$map_png <- map_png
+  ter_info[[type]][[element]]$map_pdf <- map_pdf
+  set_ter_info(ter_info)
 
-  message(glue::glue("info$figure$png: {info$figure$png}. "))
-  if (!file.exists(info$figure$png) | redo_figs){
-    message(glue::glue("  png({info$figure$png}). "))
-    png(filename=info$figure$png, res=dpi, width=w*dpi, height=h*dpi)
-    gmap_ter_cnt(info)
+  fmt       <- get_fmt()
+  b         <- el$epsg4326_extent
+  dpi       <- 300
+  w         <- 6
+  h_max     <- 8
+  h         <- min(c(h_max, diff(b[3:4])/diff(b[1:2])*w))
+
+  if (!file.exists(map_png) | redo_figs){
+    message(glue::glue("        png({basename(map_png)})"))
+    png(filename=map_png, res=dpi, width=w*dpi, height=h*dpi)
+    gmap_ter(ter, type, element)
     dev.off()
   }
-  message(glue::glue("info$figure$pdf: {info$figure$pdf}. "))
-  if (!file.exists(info$figure$pdf) | redo_figs){
-    message(glue::glue("  pdf({info$figure$pdf}). "))
-    pdf(file=info$figure$pdf, width=w, height=h)
-    gmap_ter_cnt(info)
+
+  if (!file.exists(map_pdf) | redo_figs){
+    message(glue::glue("        pdf({basename(map_pdf)})"))
+    pdf(file=map_pdf, width=w, height=h)
+    gmap_ter(ter, type, element)
     dev.off()
   }
   #browseURL(info$figure$png)
 
+  if (return_null) return(NULL)
+
   res <- switch(
     fmt,
-    html_document = lmap_ter_cnt(info),
-    word_document = knitr::include_graphics(info$figure$png),
-    pdf_document  = knitr::include_graphics(info$figure$pdf))
+    html_document = lmap_ter(ter, type, element),
+    word_document = knitr::include_graphics(map_png),
+    pdf_document  = knitr::include_graphics(map_pdf))
   return(res)
 }
 
@@ -546,116 +629,254 @@ prep_lyr_ter <- function(lyr_p, lyr_ply, ter){
 
     # intersect with eez and wrap
     ply <- sf_wrap_intersection(lyr_ply, ter_eez_wgcs_sf)
-    
+
     if (nrow(ply) == 0){
       lyr_info$territories[[ter]] <- NA
       set_lyr_info(lyr_info)
     } else {
-      
+
       # TODO: write lyr_info: components=paths
 
       # modify as needed
       if (!is.na(lyr_p$mod_eval)){
         ply <- eval(parse(text=lyr_p$mod_eval)) # ply_map(ply)
       }
-      
+
       # get depth
       ter_depth_wgcs_r <- get_ter_depth_wgcs_r(ter) # r_map(ter_depth_wgcs_r)
-      
+
       # convert to raster tif(s)
       ply_to_tifs(ply, ter_depth_wgcs_r, ter, lyr, field=lyr_p$field, by=lyr_p$by)
     }
   }
 }
 
-get_ter_info <- function(ter_info_yml, dir_data, ter, type="cnt"){
+set_ter_info <- function(ter_info){
+  ter <- ter_info$territory
+  ter_info_yml <- glue("{dir_data}/territories/{ter}.yml")
+  yaml::write_yaml(ter_info, ter_info_yml)
+}
 
-  browser()
+get_ter_info <- function(ter){
+  ter_info_yml <- glue("{dir_data}/territories/{ter}.yml")
   if (file.exists(ter_info_yml)){
-    ter_info  <- yaml::yaml.load_file(ter_info_yml)
+    ter_info  <- yaml::read_yaml(ter_info_yml)
   } else {
-    ter_info <- list()
+    ter_info <- list(
+      territory = ter)
   }
-  ter_info_yml$territory <- ter
+  ter_info
+}
 
-  # quick fixes
-  if ("raster" %in% names(info)){
-    ter_info_yml$cnt <- ter_info_yml$raster
-    ter_info_yml     <- ter_info_yml[-which(names(ter_info_yml)=="raster")]
-  }
-  if ("figure" %in% names(info)){
-    ter_info_yml$cnt <- c(ter_info_yml$cnt, info$figure)
-    ter_info_yml     <- ter_info_yml[-which(names(ter_info_yml)=="figure")]
-  }
-  yaml::write_yaml(info, ter_cnt_yml)
+make_ter_type_element <- function(ter, ter_s, ter_s_tbl, lyr_params, type, element){
+  # ter="Gulf of Mexico"; type="wind"; element="count"
 
-  s     <- ter_stack(ter, lyr_params, dir_prep_data)
+  msg(g("  make_ter_type_element({ter}, ..., {type}, {element})"))
 
-  if (type == "cnt"){
-    #info$cnt$layers
-    #if (!file.exists(info$cnt$epsg4326) ||
+  ter_info <- get_ter_info(ter)
+  lyrs_not_count <- c(names(nrel_limits), "areakm2")
 
-    lyrs_rm <- c(names(nrel_limits), "area_km2")
-    s_cnt   <- raster::dropLayer(s, which(names(s) %in% lyrs_rm))
-    r_val   <- sum(!is.na(s_cnt), na.rm=T) %>%
-      raster::mask(raster::raster(s, "depth"))
-
-    info$cnt <- list(
-        layers          = names(s),
-        layers_not_cnt  = lyrs_rm,
-        n_layers_cnt    = raster::nlayers(s_cnt),
-        cnt_max         = raster::maxValue(r_cnt),
-        epsg4326        = glue::glue("{dir_data}/territories/{ter}_cnt_epsg4326.tif"),
-        epsg4326_bounds = raster::extent(r_cnt) %>% as.vector())
-  } else {
-    bin <- type # bin <- "depth"
-
-    lims <- nrel_limits[[bin]]
-
-    tbl_b <- tbl_s %>%
-      dplyr::filter(!is.na(depth))
-
-    if (bin_by != "depth"){
-      tbl_b <- tbl_b %>%
-        dplyr::filter(
-          depth  >= lims$depth$min,
-          depth  <= lims$depth$max)
+  # skip if bin not in territory
+  if (type != "all"){
+    if (is.na(ter_info$layers[[type]])){
+      ter_info[[type]] <- NA
+      set_ter_info(ter_info)
+      msg(g("    skipping b/c {type} not in {ter}"))
+      return(ter_info)
     }
-
-    r_val <- raster::raster(s, bin)
-    nrel_limits[bin]
   }
 
-  #browser()
-  raster::writeRaster(r_val, info$cnt$epsg4326, overwrite=T)
+  # get raster of count or bin limits
+  if (element == "count"){
+    if (type == "all"){
+      msg("    calc all count")
+      ter_s_cnt <- raster::dropLayer(ter_s, which(names(ter_s) %in% lyrs_not_count))
+      # TODO: later, sum values after setting to 0 (but slow) vs assuming value of 1 if not NA
+      #       ter_s_cnt[is.na(ter_s_cnt)] <- 0
+      r <- sum(!is.na(ter_s_cnt), na.rm=T) %>%
+        raster::mask(raster::raster(ter_s, "depth"))
+    } else {
+      # read raster from all for speedup. presumes make_ter_type_element() run for type='all' before others
+      r <- raster::raster(ter_info[["all"]][[element]]$epsg4326_tif)
+    }
+  } else {
+    # bin limits
+    r <- raster::raster(ter_s, type)
+  }
 
-  r <- nrelutils::raster_unwrap(r_cnt)
-  if (extent(r)@xmin < -180){
+  # filter to nrel_limits
+  msg("    filter to nrel_limits")
+  if (type != "all"){
+    r_depth <- raster::raster(ter_s, "depth")
+    # TODO: rerun with new is.na(r_bin) condition
+    if (type != "depth"){
+      r_bin <- raster::raster(ter_s, type)
+      r_na <- r_depth < nrel_limits[[type]]$depth$min |
+        r_depth > nrel_limits[[type]]$depth$max |
+        is.na(r_bin) |
+        r_bin < min(nrel_limits[[type]]$breaks)
+      r[r_na] <- NA
+    } else {
+      r[r_depth < min(nrel_limits$depth$breaks) |
+          r_depth > max(nrel_limits$depth$breaks)] <- NA
+    }
+  }
 
-    info$raster$epsg3857 <- glue::glue("{dir_data}/territories/{ter}_cnt_epsg3857_{c('left','right')}.tif")
-    r_l <- raster::crop(r, raster::extent(-360,-180,-90,90), snap="in") %>% raster::shift(360) %>% raster::trim()
-    r_r <- raster::crop(r, raster::extent(-180, 180,-90,90), snap="in") %>% raster::trim()
+  # assign breaks to bin limit rasters
+  msg("    assign breaks to bin limit rasters")
+  if (element == "limits"){
+    r <- raster::cut(r, breaks = nrel_limits[[type]]$breaks, include.lowest = T)
+  }
+
+  pfx  <- glue::glue("{dir_data}/territories/{ter}_{type}_{element}")
+
+  # trim raster
+  msg("    trimming raster")
+  r <- raster::trim(r)
+  
+  # register raster
+  msg("    register wrapped geographic raster")
+  tif_epsg4326 <- glue::glue("{pfx}_epsg4326.tif")
+  ter_info[[type]][[element]] <- list(
+    val_range       = c(raster::minValue(r), raster::maxValue(r)),
+    epsg4326_tif    = tif_epsg4326,
+    epsg4326_extent = raster::extent(r) %>% as.vector())
+  # write wrapped geographic raster
+  raster::writeRaster(r, tif_epsg4326, overwrite=T)
+
+  # handle mercator raster for leaflet
+  msg("    handle mercator raster for leaflet")
+  r_u <- raster_unwrap(r)
+  if (raster::extent(r_u)@xmin < -180){
+    # split into rasters around dateline and project for leaflet
+    tifs_epsg3857 <- glue::glue("{pfx}_epsg3857_{c('left','right')}.tif")
+    r_l <- raster::crop(r_u, raster::extent(-360,-180,-90,90), snap="in") %>% raster::shift(360) %>% raster::trim()
+    r_r <- raster::crop(r_u, raster::extent(-180, 180,-90,90), snap="in") %>% raster::trim()
     r_l_epsg3857 <- leaflet::projectRasterForLeaflet(r_l)
     r_r_epsg3857 <- leaflet::projectRasterForLeaflet(r_r)
-    raster::writeRaster(r_l_epsg3857, info$raster$epsg3857[1], overwrite=T)
-    raster::writeRaster(r_r_epsg3857, info$raster$epsg3857[2], overwrite=T)
 
-    # determine biggest longitudinal range for initial map display
+    # write rasters
+    raster::writeRaster(r_l_epsg3857, tifs_epsg3857[1], overwrite=T)
+    raster::writeRaster(r_r_epsg3857, tifs_epsg3857[2], overwrite=T)
+
+    # extent based on biggest longitudinal range for initial map display
     e_l <- raster::extent(r_l)
     e_r <- raster::extent(r_r)
     x_l  <- e_l %>% as.vector() %>% .[1:2] %>% diff()
     x_r  <- e_r %>% as.vector() %>% .[1:2] %>% diff()
-    b <- c(e_l, e_r)[[which.max(c(x_l,x_r))]]
-    #browser()
+    b_epsg3857 <- c(e_l, e_r)[[which.max(c(x_l,x_r))]] %>% as.vector()
   } else {
-    info$raster$epsg3857 <- glue::glue("{dir_data}/territories/{ter}_cnt_epsg3857.tif")
-    r_epsg3857 <- leaflet::projectRasterForLeaflet(r)
-    raster::writeRaster(r_epsg3857, info$raster$epsg3857, overwrite=T)
+    # project for leaflet
+    tifs_epsg3857 <- glue::glue("{pfx}_epsg3857.tif")
+    r_epsg3857    <- leaflet::projectRasterForLeaflet(r_u)
 
-    b <- raster::extent(r)
+    # write raster
+    raster::writeRaster(r_epsg3857, tifs_epsg3857, overwrite=T)
+
+    # extent
+    b_epsg3857 <- raster::extent(r) %>% as.vector()
   }
-  info$raster$epsg3857_init_bounds <- b %>% as.vector()
-  yaml::write_yaml(info, ter_cnt_yml)
+  ter_info[[type]][[element]]$epsg3857_tif         <- tifs_epsg3857
+  ter_info[[type]][[element]]$epsg3857_extent_init <- b_epsg3857
+  set_ter_info(ter_info)
+
+  # update map figures
+  msg("    update map figures")
+  map_ter(ter, type, element, redo_figs=T, return_null=F)
+
+  # table summaries
+  if (type != "all" & element == "count"){
+    msg("    table summaries")
+    bin <- type
+    ter_bin_lyr_csv <- glue("{pfx}_layers.csv")
+    ter_bin_cnt_csv <- glue("{pfx}_cumulative.csv")
+    ter_info[[type]][[element]]$layers_csv     <- ter_bin_lyr_csv
+    ter_info[[type]][[element]]$cumulative_csv <- ter_bin_cnt_csv
+
+    tbl_b   <- ter_bin(ter_s_tbl, bin)
+    tbl_bl  <- ter_bin_lyr(tbl_b)
+    tbl_bls <- ter_bin_lyr_smry(tbl_bl)
+    write_csv(tbl_bls, ter_bin_lyr_csv)
+
+    tbl_bc  <- ter_bin_cnt(tbl_b)
+    write_csv(tbl_bc, ter_bin_cnt_csv)
+  }
+
+  set_ter_info(ter_info)
+}
+
+make_ter_info <- function(ter, lyr_params, bins){
+
+  ter_info       <- get_ter_info(ter)
+  lyrs_not_count <- c(names(nrel_limits), "areakm2")
+  types          <- c("all", bins)
+
+  # # quick fixes
+  # if ("raster" %in% names(ter_info)){
+  #   ter_info$cnt <- ter_info$raster
+  #   ter_info     <- ter_info[-which(names(ter_info)=="raster")]
+  #   names(ter_info$cnt)[which(names(ter_info$cnt)=="layers")] <- "layer_components"
+  #   ter_info$cnt$layers_considered <- lyr_params$key[lyr_params$key != "aquaculture"]
+  #   ter_info$cnt$layers_contained  <- sort(unique(str_split(ter_info$cnt$layer_components, "_", simplify=T)[,1])) %>%
+  #     setdiff("area")
+  # }
+  # if ("figure" %in% names(ter_info)){
+  #   ter_info$cnt <- c(ter_info$cnt, ter_info$figure)
+  #   ter_info     <- ter_info[-which(names(ter_info)=="figure")]
+  # }
+  # yaml::write_yaml(ter_info, ter_info_yml)
+
+  # fetch and update territory if missing layers or bins
+  missing_layers <- setdiff(lyr_params$key, names(ter_info$layers))
+  missing_types  <- setdiff(types, names(ter_info))
+
+  # temp add map figures
+  # msg("    TEMP update map figures")
+  # map_ter(ter, "all", "count", redo_figs=T, return_null=T)
+  # for (bin in bins){
+  #   map_ter(ter, bin, "count" , redo_figs=T, return_null=T)
+  #   map_ter(ter, bin, "limits", redo_figs=T, return_null=T)
+  # }
+
+  if (length(missing_layers) > 0 | length(missing_types) > 0){
+    msg(g("  missing_layers: {paste(missing_layers, collapse=', ')}"))
+    msg(g("  missing_types : {paste(missing_types, collapse=', ')}"))
+
+    msg("  loading ter_s, ter_s_tbl")
+    ter_s     <- ter_stack(ter, lyr_params)
+    ter_s_tbl <- ter_stack_tbl(ter_s)
+
+    # initiate layers
+    if (!"layers" %in% names(ter_info)){
+      ter_info$layers           <- attr(ter_s, "lyrs_in_ter")
+      ter_info$layers_not_count <- lyrs_not_count
+      set_ter_info(ter_info)
+    }
+
+    if (length(missing_types) > 0 & length(missing_layers) == 0){
+      # if only missing type, redo needed type
+      for (type in missing_types){
+        make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, type, "count")
+        if (type %in% bins){
+          make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, type, "limits")
+        }
+      }
+    } else {
+      # otherwise if missing layer, redo all types
+      make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, "all", "count")
+      for (bin in bins){
+        make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, bin, "limits")
+        make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, bin, "count")
+      }
+    }
+    # update layers into ter_info
+    ter_info <- get_ter_info(ter)
+    ter_info$layers           <- attr(ter_s, "lyrs_in_ter")
+    ter_info$layers_not_count <- lyrs_not_count
+    set_ter_info(ter_info)
+  }
+
+  get_ter_info(ter)
 }
 
 fix_prep_lyr_ter <- function(){

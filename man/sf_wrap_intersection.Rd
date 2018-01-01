@@ -4,12 +4,12 @@
 \alias{sf_wrap_intersection}
 \title{Wrap and intersect}
 \usage{
-sf_wrap_intersection(paths_str, y)
+sf_wrap_intersection(x, y)
 }
 \arguments{
-\item{paths_str}{character. colon `;` seperated paths to sf readable data (shp, gdb, geojson, etc)}
+\item{x}{sf object to intersect, eg layer}
 
-\item{y}{sf object to intersect}
+\item{y}{sf object to intersect, eg eez}
 }
 \value{
 wrapped and intersected sf object with a one field as a valid MULTIPOLYGON

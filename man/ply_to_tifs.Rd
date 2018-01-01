@@ -4,7 +4,7 @@
 \alias{ply_to_tifs}
 \title{Polygons (ply) to raster(s) on filesystem (tif)}
 \usage{
-ply_to_tifs(x, y, ter, key, field = "one", by = NA, sfx = "epsg4326.tif")
+ply_to_tifs(x, y, ter, lyr, field = "one", by = NA, sfx = "epsg4326.tif")
 }
 \arguments{
 \item{x}{sf polygon object}
@@ -13,11 +13,11 @@ ply_to_tifs(x, y, ter, key, field = "one", by = NA, sfx = "epsg4326.tif")
 
 \item{ter}{territory name prefix}
 
-\item{key}{output directory and used in prefix="{ter}_{key}"}
-
 \item{by}{character. Name of column in sf object by which to aggregate layers. Default=NULL}
 
 \item{sfx}{character. Suffix of output tif. Default="epsg4326.tif"}
+
+\item{key}{output directory and used in prefix="{ter}_{key}"}
 }
 \value{
 return leaflet map

@@ -111,4 +111,15 @@ ply_to_tifs <- function(x, y, ter, lyr, field="one", by=NA, sfx="epsg4326.tif"){
   }
 }
 
+raster_trim <- function(r){
+  # raster::trim() crazy slow compared to this
+  r_m          <- is.na(raster::as.matrix(r))
+  col_notna    <- which(colSums(r_m) != nrow(r))
+  row_notna    <- which(rowSums(r_m) != ncol(r))
+  extent_notna <- raster::extent(
+    r,
+    row_notna[1], row_notna[length(row_notna)],
+    col_notna[1], col_notna[length(col_notna)])
+  raster::crop(r, extent_notna)
+}
 

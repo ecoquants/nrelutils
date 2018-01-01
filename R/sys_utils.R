@@ -1,5 +1,7 @@
+g <- glue::glue
+
 msg <- function(txt){
-  cat(txt, glue::glue(" - {Sys.time()}\n"), file=stderr())
+  cat(txt, glue::glue(" - {Sys.time()}"),"\n", file=stderr())
 }
 
 #' Pipe
