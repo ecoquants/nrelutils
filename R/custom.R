@@ -47,14 +47,14 @@ get_ter_depth_wgcs_r <- function(ter){
 }
 
 ter_stack <- function(ter, lyr_params){
-  # ter = "West"; params_csv = "./prep_params.csv"
+  # ter = "West"
 
   lyrs        <- sort(lyr_params$key)
   lyrs_in_ter <- setNames(rep(NA, length(lyrs)), lyrs) %>% as.list()
 
   if (exists("s_ter", inherits=F)) rm(s_ter)
   for (lyr in lyrs){ # lyr = "aquaculture" # "wind" # key <- "mpa" # keys[1] "efh" mpa" "wind"
-    lyr_info_yml <- glue::glue("{dir_prep_data}/{lyr}/_{lyr}.yml")
+    lyr_info_yml <- glue::glue("{dir_lyrs}/{lyr}/_{lyr}.yml")
     lyr_info     <- yaml::read_yaml(lyr_info_yml)
 
     # skip if layer not in territory
@@ -66,7 +66,7 @@ ter_stack <- function(ter, lyr_params){
     lyrs_in_ter[[lyr]] <- names(lyr_info$territories[[ter]]$components)
     tifs               <- purrr::map_chr(
       lyr_info$territories[[ter]]$components,
-      ~glue::glue("{dir_prep_data}/{lyr}/{.x[1]}"))
+      ~glue::glue("{dir_lyrs}/{lyr}/{.x[1]}"))
     s_lyr              <- raster::stack(tifs)
     if (length(lyrs_in_ter[[lyr]]) == 1 && lyr == lyrs_in_ter[[lyr]]){
       names(s_lyr) <- lyr
@@ -326,7 +326,7 @@ plot_caption_ter_bin_cnt <- function(ter, bin_html){
 }
 
 plot_ter_bin_cnt <- function(ter, bin){
-  
+
   fmt <- get_fmt()
   ter_info <- get_ter_info(ter)
   ter_bin_cnt_csv <- ter_info[[bin]]$count$cumulative_csv
@@ -396,7 +396,7 @@ lmap_ter <- function(ter, type, element){
   el       <- ter_info[[type]][[element]]
   b        <- el$epsg3857_extent_init
   r        <- raster::raster(el$epsg3857_tif[1])
-  
+
   # TODO: fix creation vs here
   if (b[1] > 180){
     b[1:2] = b[1:2] - 360
@@ -407,7 +407,7 @@ lmap_ter <- function(ter, type, element){
     r2 <- raster::raster(el$epsg3857_tif[2])
     vals <- c(vals, getValues(r2))
   }
-  
+
   if (element == "limits"){
     # TODO: for limits project to leaflet without interpolation so integer
     brk_labels <<- nrel_limits[[type]]$break_labels
@@ -417,22 +417,22 @@ lmap_ter <- function(ter, type, element){
     if (length(el$epsg3857_tif) == 2){
       r2 <- round(r2)
     }
-    
+
     pal_col <- ifelse(type == "depth", "Blues", "Greens")
     pal <- leaflet::colorFactor(
-      palette = pal_col, 
+      palette = pal_col,
       domain = factor(round(vals), 1:length(brk_labels), brk_labels),
       levels = 1:length(brk_labels),
       na.color="#00000000", reverse=F)
-    
+
   } else {
     legend_title <- "Count"
-    
+
     pal <- colorNumeric(
       palette = 'Spectral', na.color="#00000000",
       reverse=T, domain = vals)
   }
-  
+
   m <- leaflet::leaflet(
     options=leafletOptions(worldCopyJump=T)) %>%
     #options=c(leafletOptions(), attributionControl=F, zoomControl=F, worldCopyJump=T)) %>%
@@ -450,15 +450,15 @@ lmap_ter <- function(ter, type, element){
     leaflet::addScaleBar("bottomleft") %>%
     leaflet::fitBounds(b[1], b[3], b[2], b[4]) %>%
     leaflet::addLayersControl(baseGroups = c("B&W", "Ocean"), overlayGroups=c("Count"))
-  
+
   if (element == "limits"){
     m <- m %>%
       leaflet::addLegend(
-        "bottomright", 
+        "bottomright",
         colors = pal(1:length(brk_labels)),
         labels = brk_labels,
         opacity = 0.8, title = legend_title)
-    
+
   } else {
     m <- m %>%
       leaflet::addLegend("bottomright", pal, vals, opacity=0.8, title=legend_title)
@@ -477,12 +477,12 @@ lmap_ter <- function(ter, type, element){
 gmap_ter <- function(ter, type, element){
   # ter <- "Alaska"; type <- "depth"; element <- "limits"
   #gmap_ter("Alaska", "depth", "limits")
-    # ter <- ; type <- "depth"; element <- 
-    
+    # ter <- ; type <- "depth"; element <-
+
 
   ter_info <- get_ter_info(ter)
   el       <- ter_info[[type]][[element]]
-  # devtools::load_all("~/github/nrelutils") 
+  # devtools::load_all("~/github/nrelutils")
   r        <- raster::raster(el$epsg4326_tif) %>% raster_trim()
   b        <- raster::extent(r) %>% as.vector()
   bb       <- extent(r) %>% as("SpatialPolygons") %>% fortify()
@@ -499,11 +499,11 @@ gmap_ter <- function(ter, type, element){
     ggplot2::theme_bw() +
     ggplot2::theme(
       axis.title = element_text(size = ggplot2::rel(0.6)))
-  
-  
+
+
   # TODO: add units to legend_title
   #if (type == "depth" & element == "limits") browser()
-  
+
   if (element == "limits"){
     brk_labels <<- nrel_limits[[type]]$break_labels
     msg(g("        {type}: {paste(brk_labels, collapse=',')}"))
@@ -517,8 +517,8 @@ gmap_ter <- function(ter, type, element){
         palette = pal, name = legend_title, direction = 1, na.value = NA)
   } else {
     legend_title <- "Count"
-    
-    p <- p + 
+
+    p <- p +
       ggplot2::geom_tile(aes(fill=value), alpha=0.8) +
       ggplot2::scale_fill_distiller(
         palette = "Spectral", name = legend_title, direction = -1, na.value = NA)
@@ -540,11 +540,11 @@ get_fmt <- function(){
 map_ter <- function(ter, type="all", element="count", redo_figs=F, return_null=F){
 
   msg(g("      {ter}_{type}_{element}_map.[png|pdf]"))
-  
+
   ter_info  <- get_ter_info(ter)
-  
+
   if (is.na(ter_info[[type]][1])) return(NULL)
-  
+
   el <- ter_info[[type]][[element]]
 
   map_pfx <- glue::glue("{dir_data}/territories/{ter}_{type}_{element}")
@@ -587,8 +587,8 @@ map_ter <- function(ter, type="all", element="count", redo_figs=F, return_null=F
 }
 
 get_lyr_info <- function(lyr){
-  dir_lyr      <- glue::glue("{dir_prep_data}/{lyr}")
-  lyr_info_yml <- glue::glue("{dir_prep_data}/{lyr}/_{lyr}.yml")
+  dir_lyr      <- glue::glue("{dir_lyrs}/{lyr}")
+  lyr_info_yml <- glue::glue("{dir_lyrs}/{lyr}/_{lyr}.yml")
 
   if (!dir.exists(dir_lyr)){
     dir.create(dir_lyr)
@@ -611,7 +611,7 @@ get_lyr_info <- function(lyr){
 
 set_lyr_info <- function(lyr_info){
   lyr <- lyr_info$key
-  lyr_info_yml <- glue("{dir_prep_data}/{lyr}/_{lyr}.yml")
+  lyr_info_yml <- glue("{dir_lyrs}/{lyr}/_{lyr}.yml")
   yaml::write_yaml(lyr_info, lyr_info_yml)
 }
 
@@ -733,7 +733,7 @@ make_ter_type_element <- function(ter, ter_s, ter_s_tbl, lyr_params, type, eleme
   # trim raster
   msg("    trimming raster")
   r <- raster::trim(r)
-  
+
   # register raster
   msg("    register wrapped geographic raster")
   tif_epsg4326 <- glue::glue("{pfx}_epsg4326.tif")
@@ -880,8 +880,8 @@ make_ter_info <- function(ter, lyr_params, bins){
 }
 
 fix_prep_lyr_ter <- function(){
-  # quick fix in prep.R: from digest ({ter}_{lyr}_epsg4326.txt) to yaml (_{ter}.yml)
-  lyr_ter_txt <- glue("{dir_prep_data}/{lyr}/{ter}_{lyr}_epsg4326.txt")
+  # quick fix in prep_layers.R: from digest ({ter}_{lyr}_epsg4326.txt) to yaml (_{ter}.yml)
+  lyr_ter_txt <- glue("{dir_lyrs}/{lyr}/{ter}_{lyr}_epsg4326.txt")
   if (file.exists(lyr_ter_txt)){
     txt <- read_lines(lyr_ter_txt)
 
