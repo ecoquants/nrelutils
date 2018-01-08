@@ -70,35 +70,65 @@ sf_intersects = function(a, b){
 #'
 #' @return wrapped and intersected sf object with a one field as a valid MULTIPOLYGON
 #' @export
-sf_wrap_intersection <- function(x, y){
+sf_intersection <- function(x, y){
 
   # merge into single wrapped geojson for ease of use across territories
   if (nrow(x) == 0) return(x)
 
-  cat(glue::glue("    Intersecting"), "\n")
-  x %>%
-    sf_intersects(y) %>%
-    sf::st_make_valid() %>%
-    sf::st_intersection(y) %>%
+  msg("    Slicing")
+
+  #browser()
+  x <- sf_intersects(x, y)
+
+  if (nrow(x) == 0)
+    return(x)
+
+  idx_invalid <- which(!sf::st_is_valid(x))
+  if (length(idx_invalid) > 0 ){
+    # 1: In evalq((function (..., call. = TRUE, immediate. = FALSE,  ... :
+    #    Self-intersection at or near point 240.30709107581595 34.404069513919254
+    msg(g("    Making valid"))
+    browser()
+    x1_0 <- x[idx_invalid[1],]
+    x1 <- lwgeom::st_make_valid(x[idx_invalid[1],])
+  }
+
+  msg("    Intersecting")
+  x <- sf::st_intersection(x, y)
+
+  # TODO: check for dominant geometry type for casting
+  geom_type <- sf::st_geometry_type(x) %>%
+    table() %>% sort() %>% rev() %>% names() %>% .[1]
+  if (geom_type %in% c("POLYGON", "MULTIPOLYGON")){
+    geom_type <- "MULTIPOLYGON"
+  } else {
+    msg(g("    Unhandled geom_type '{geom_type}'"))
+    browser()
+  }
+
+  msg(g("    Casting to {geom_type}"))
+  x <- x %>%
     dplyr::mutate(
       one = 1,
-      geometry = st_cast(geometry, "MULTIPOLYGON"))
+      geometry = st_cast(geometry, geom_type)) # "MULTIPOLYGON"))
+
+  x
 }
 
 sf_lyr_ply <- function(lyr_p){
 
   lyr      <- lyr_p$key
   lyr_info <- get_lyr_info(lyr)
-  ply_geo  <- glue::glue("{dir_prep_data}/{lyr}/_{lyr}_epsg4326.geojson")
+  ply_geo  <- glue::glue("{dir_lyrs}/{lyr}/_{lyr}_epsg4326.geojson")
 
   if (!file.exists(ply_geo)){
-    cat(glue::glue("  Assembling: {ply_geo}"), "\n")
+    msg(g("  Assembling: {ply_geo}"))
 
     paths <- stringr::str_split(lyr_p$paths, ";")[[1]]
     for (k in 1:length(paths)){ # k <- 2
 
       path <- paths[k]
-      cat(glue::glue("    sf_wrap (& rbind): {basename(path)}"), "\n")
+      msg(g("    sf_wrap (& rbind): {basename(path)}"))
 
       ply1 <- sf::read_sf(path) %>%
         sf_wrap() %>%
@@ -108,7 +138,7 @@ sf_lyr_ply <- function(lyr_p){
         ply <- ply1
       } else {
         # TODO: add this exception to `prep_eval` fld in prep_params.csv and fxn to prep_layer_functions.R
-        if (p$key == "wind" & basename(path) == "atlantic_coast_90mwindspeed_off.shp"){
+        if (lyr == "wind" & basename(path) == "atlantic_coast_90mwindspeed_off.shp"){
           ply1 <- ply1 %>% dplyr::rename(gridcode=wpc)
         }
 
@@ -123,10 +153,10 @@ sf_lyr_ply <- function(lyr_p){
         }
 
         # bind
-        ply <- sf::rbind(ply, ply1)
+        ply <- rbind(ply, ply1)
       }
       #browser()
-      cat(glue::glue("      {length(names(ply))}: {paste(names(ply), collapse=',')}"),"\n")
+      msg(g("      {length(names(ply))}: {paste(names(ply), collapse=',')}"))
     }
     #browser()
     sf::write_sf(ply, ply_geo)
@@ -168,4 +198,8 @@ ply_map <- function(ply, fld_color="layer"){
     leaflet::addLayersControl(
       baseGroups = c("B&W", "Color"),
       overlayGroups = layers)
+}
+
+raster_project_leaflet_nearest <- function (x){
+  raster::projectRaster(x, raster::projectExtent(x, crs = sp::CRS(leaflet:::epsg3857)), method = "ngb")
 }

@@ -5,13 +5,15 @@ get_ter_eez_wgcs_sf <- function(ter){
 
 get_ter_depth_wgcs_r <- function(ter){
 
-  dir.create("./depth", showWarnings=F)
+  dir_depth <- glue("{dir_lyrs}/depth")
+
+  dir.create(dir_depth, showWarnings=F)
   # ter = "Great Lakes"
-  ter_depth_wgcs_tif <- sprintf("./depth/%s_depth_epsg4326.tif", ter)
+  ter_depth_wgcs_tif <- glue::glue("{dir_depth}/{ter}_depth_epsg4326.tif")
   if (!file.exists(ter_depth_wgcs_tif)){
     cat("    creating", ter_depth_wgcs_tif, "\n")
 
-    depth_wgcs_tif <- "depth/_depth_epsg4326.tif"
+    depth_wgcs_tif <- glue::glue("{dir_depth}/_depth_epsg4326.tif")
     if (!file.exists(depth_wgcs_tif)){
       cat("    creating", depth_wgcs_tif, "\n")
 
@@ -49,7 +51,7 @@ get_ter_depth_wgcs_r <- function(ter){
 ter_stack <- function(ter, lyr_params){
   # ter = "West"
 
-  lyrs        <- sort(lyr_params$key)
+  lyrs        <- sort(lyr_params %>% filter(run==T) %>% .$key)
   lyrs_in_ter <- setNames(rep(NA, length(lyrs)), lyrs) %>% as.list()
 
   if (exists("s_ter", inherits=F)) rm(s_ter)
@@ -63,6 +65,7 @@ ter_stack <- function(ter, lyr_params){
     }
 
     # get raster stack of layer components
+    msg(g("    {ter} - {lyr}"))
     lyrs_in_ter[[lyr]] <- names(lyr_info$territories[[ter]]$components)
     tifs               <- purrr::map_chr(
       lyr_info$territories[[ter]]$components,
@@ -152,20 +155,27 @@ ter_bin_lyr_smry <- function(tbl_b){
   dt$rank <- 0
 
   # dl: layer x bin = areakm2
+  #if (ter=="Atlantic Islands" & type == "wave" & element == "count")
+  #browser()
   dl <- tbl_b %>%
     tidyr::gather(key = layer, value = value, -bin, -areakm2) %>%
     dplyr::filter(!is.na(value)) %>%
     dplyr::group_by(layer, bin) %>%
     dplyr::summarise(
-      areakm2 = sum(areakm2)) %>%
-    tidyr::spread(bin, areakm2) %>%
-    dplyr::ungroup()
-  dl$Total <- rowSums(dl[,-1], na.rm = TRUE)
+      areakm2 = sum(areakm2))
+  if (nrow(dl) == 0){
+    dl <- NULL
+  } else {
+    dl <- dl %>%
+      tidyr::spread(bin, areakm2) %>%
+      dplyr::ungroup()
+    dl$Total <- rowSums(dl[,-1], na.rm = TRUE)
 
-  # rank
-  dl <- dl %>%
-    dplyr::mutate(
-      rank = dplyr::dense_rank(1/Total))
+    # rank
+    dl <- dl %>%
+      dplyr::mutate(
+        rank = dplyr::dense_rank(1/Total))
+  }
 
   # bind totals
   tbl_bls <- dplyr::bind_rows(dt, dl)
@@ -355,7 +365,7 @@ ter_cnt_raster <- function(s){
     raster::mask(raster::raster(s, "depth"))
   r <- raster_unwrap(r_cnt) # plot(r)
 
-  r_3857 <- leaflet::projectRasterForLeaflet(r)
+  r_3857 <- raster_project_leaflet_nearest(r)
   r_3857
 }
 
@@ -528,9 +538,16 @@ gmap_ter <- function(ter, type, element){
 }
 
 get_fmt <- function(){
-  rmd <- knitr::current_input()
-  if (!is.null(rmd)){
-    fmt <- rmarkdown::default_output_format(rmd)$name
+  #rmd <- knitr::current_input()
+  pandoc_to <- opts_knit$get("rmarkdown.pandoc.to")
+  #if (!is.null(rmd)){
+  if (!is.null(pandoc_to)){
+    #fmt <- rmarkdown::default_output_format(rmd)$name
+    fmt <- switch(
+      pandoc_to,
+      html = "html_document",
+      latex = "pdf_document",
+      docx  = "word_document")
   } else {
     fmt <- "html_document" # for interactive output
   }
@@ -539,7 +556,7 @@ get_fmt <- function(){
 
 map_ter <- function(ter, type="all", element="count", redo_figs=F, return_null=F){
 
-  msg(g("      {ter}_{type}_{element}_map.[png|pdf]"))
+  #msg(g("      {ter}_{type}_{element}_map.[png|pdf]"))
 
   ter_info  <- get_ter_info(ter)
 
@@ -560,6 +577,8 @@ map_ter <- function(ter, type="all", element="count", redo_figs=F, return_null=F
   w         <- 6
   h_max     <- 8
   h         <- min(c(h_max, diff(b[3:4])/diff(b[1:2])*w))
+
+  msg(g("  map_ter({ter}, {type}, {element}); fmt={fmt}"))
 
   if (!file.exists(map_png) | redo_figs){
     message(glue::glue("        png({basename(map_png)})"))
@@ -623,12 +642,25 @@ prep_lyr_ter <- function(lyr_p, lyr_ply, ter){
 
   #browser()
   if (is.null(lyr_ter_info) | lyr_p$redo){
-
     # get eez
     ter_eez_wgcs_sf  <- get_ter_eez_wgcs_sf(ter)  # ply_map(ter_eez_wgcs_sf, "territory")
 
+    # check if any intersection
+    lyr_inx <- sf_intersects(lyr_ply, ter_eez_wgcs_sf)
+    if (nrow(lyr_inx) == 0){
+      lyr_info$territories[[ter]] <- NA
+      set_lyr_info(lyr_info)
+      return(NULL)
+    }
+
     # intersect with eez and wrap
-    ply <- sf_wrap_intersection(lyr_ply, ter_eez_wgcs_sf)
+    lyr_ter_geo <- glue::glue("{dir_lyrs}/{lyr}/{ter}_{lyr}_epsg4326.geojson")
+    if (!file.exists(lyr_ter_geo)){
+      ply <- sf_intersection(lyr_ply, ter_eez_wgcs_sf)
+      write_sf(ply, lyr_ter_geo)
+    } else {
+      ply <- read_sf(lyr_ter_geo)
+    }
 
     if (nrow(ply) == 0){
       lyr_info$territories[[ter]] <- NA
@@ -678,6 +710,11 @@ make_ter_type_element <- function(ter, ter_s, ter_s_tbl, lyr_params, type, eleme
 
   # skip if bin not in territory
   if (type != "all"){
+    # TODO: make_ter_type_element(Alaska, ..., wave, limits)  - 2018-01-04 16:32:25
+    # Quitting from lines 19-102 (nrel-uses.Rmd)
+    # Error in if (is.na(ter_info$layers[[type]])) { :
+    #     argument is of length zero
+    #   Calls: <Anonymous> ... eval -> eval -> make_ter_info -> make_ter_type_element
     if (is.na(ter_info$layers[[type]])){
       ter_info[[type]] <- NA
       set_ter_info(ter_info)
@@ -730,9 +767,15 @@ make_ter_type_element <- function(ter, ter_s, ter_s_tbl, lyr_params, type, eleme
 
   pfx  <- glue::glue("{dir_data}/territories/{ter}_{type}_{element}")
 
-  # trim raster
+  # if all NA, set to NA, eg make_ter_type_element(Atlantic Islands, ..., tide, count)
+  if (is.na(raster::minValue(r)) & is.na(raster::maxValue(r))){
+    ter_info[[type]][[element]] = NA
+    set_ter_info(ter_info)
+    return(NULL)
+  }
+
   msg("    trimming raster")
-  r <- raster::trim(r)
+  r <- raster_trim(r)
 
   # register raster
   msg("    register wrapped geographic raster")
@@ -750,10 +793,10 @@ make_ter_type_element <- function(ter, ter_s, ter_s_tbl, lyr_params, type, eleme
   if (raster::extent(r_u)@xmin < -180){
     # split into rasters around dateline and project for leaflet
     tifs_epsg3857 <- glue::glue("{pfx}_epsg3857_{c('left','right')}.tif")
-    r_l <- raster::crop(r_u, raster::extent(-360,-180,-90,90), snap="in") %>% raster::shift(360) %>% raster::trim()
-    r_r <- raster::crop(r_u, raster::extent(-180, 180,-90,90), snap="in") %>% raster::trim()
-    r_l_epsg3857 <- leaflet::projectRasterForLeaflet(r_l)
-    r_r_epsg3857 <- leaflet::projectRasterForLeaflet(r_r)
+    r_l <- raster::crop(r_u, raster::extent(-360,-180,-90,90), snap="in") %>% raster::shift(360) %>% raster_trim()
+    r_r <- raster::crop(r_u, raster::extent(-180, 180,-90,90), snap="in") %>% raster_trim()
+    r_l_epsg3857 <- raster_project_leaflet_nearest(r_l)
+    r_r_epsg3857 <- raster_project_leaflet_nearest(r_r)
 
     # write rasters
     raster::writeRaster(r_l_epsg3857, tifs_epsg3857[1], overwrite=T)
@@ -768,13 +811,13 @@ make_ter_type_element <- function(ter, ter_s, ter_s_tbl, lyr_params, type, eleme
   } else {
     # project for leaflet
     tifs_epsg3857 <- glue::glue("{pfx}_epsg3857.tif")
-    r_epsg3857    <- leaflet::projectRasterForLeaflet(r_u)
+    r_epsg3857    <- raster_project_leaflet_nearest(r_u)
 
     # write raster
     raster::writeRaster(r_epsg3857, tifs_epsg3857, overwrite=T)
 
     # extent
-    b_epsg3857 <- raster::extent(r) %>% as.vector()
+    b_epsg3857 <- raster::extent(r_u) %>% as.vector()
   }
   ter_info[[type]][[element]]$epsg3857_tif         <- tifs_epsg3857
   ter_info[[type]][[element]]$epsg3857_extent_init <- b_epsg3857
@@ -795,6 +838,7 @@ make_ter_type_element <- function(ter, ter_s, ter_s_tbl, lyr_params, type, eleme
 
     tbl_b   <- ter_bin(ter_s_tbl, bin)
     tbl_bl  <- ter_bin_lyr(tbl_b)
+    # devtools::load_all("../nrelutils")
     tbl_bls <- ter_bin_lyr_smry(tbl_bl)
     write_csv(tbl_bls, ter_bin_lyr_csv)
 
@@ -827,7 +871,21 @@ make_ter_info <- function(ter, lyr_params, bins){
   # yaml::write_yaml(ter_info, ter_info_yml)
 
   # fetch and update territory if missing layers or bins
-  missing_layers <- setdiff(lyr_params$key, names(ter_info$layers))
+  missing_layers <- setdiff(
+    lyr_params %>% filter(run==T) %>% .$key,
+    setdiff(names(ter_info$layers), lyr_params %>% filter(redo==T)))
+  # check that missing layers are available in
+  #browser()
+  for (lyr in missing_layers){ # lyr <- missing_layers[1]
+    lyr_in_ter <- !is.na(get_lyr_info(lyr)$territories[[ter]])
+    if (!lyr_in_ter){
+      msg(g("  missing or redo layer {lyr}, but not in {ter}, so ter_info$layers${lyr} = NA"))
+      ter_info$layers[[lyr]] <- NA
+      set_ter_info(ter_info)
+      ter_info <- get_ter_info(ter)
+      missing_layers <- setdiff(missing_layers, lyr)
+    }
+  }
   missing_types  <- setdiff(types, names(ter_info))
 
   # temp add map figures
@@ -847,15 +905,15 @@ make_ter_info <- function(ter, lyr_params, bins){
     ter_s_tbl <- ter_stack_tbl(ter_s)
 
     # initiate layers
-    if (!"layers" %in% names(ter_info)){
-      ter_info$layers           <- attr(ter_s, "lyrs_in_ter")
-      ter_info$layers_not_count <- lyrs_not_count
-      set_ter_info(ter_info)
-    }
+    #if (!"layers" %in% names(ter_info)){
+    ter_info$layers           <- attr(ter_s, "lyrs_in_ter")
+    ter_info$layers_not_count <- lyrs_not_count
+    set_ter_info(ter_info)
+    #}
 
     if (length(missing_types) > 0 & length(missing_layers) == 0){
       # if only missing type, redo needed type
-      for (type in missing_types){
+      for (type in missing_types){ # type = "wave"
         make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, type, "count")
         if (type %in% bins){
           make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, type, "limits")
@@ -865,7 +923,6 @@ make_ter_info <- function(ter, lyr_params, bins){
       # otherwise if missing layer, redo all types
       make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, "all", "count")
       for (bin in bins){
-        make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, bin, "limits")
         make_ter_type_element(ter, ter_s, ter_s_tbl, lyr_params, bin, "count")
       }
     }
@@ -896,4 +953,41 @@ fix_prep_lyr_ter <- function(){
     set_lyr_info(lyr_info)
     file.remove(lyr_ter_txt)
   }
+}
+
+dt_lyrs_ter <- function(lyr_params){
+  fmt <- get_fmt()
+
+  lyrs_ter_tbl <- map_df(
+    1:nrow(lyr_params),
+    function(i){
+      lyr_p        <- lyr_params[i,]
+      lyr          <- lyr_p$key
+      lyrs_notna   <- !is.na(get_lyr_info(lyr)$territories)
+      lyrs_checked <- ifelse(lyrs_notna, "✔", "")
+
+      tibble(
+        Source = lyr_p$source,
+        lyr    = lyr,
+        Layer  = lyr_p$title) %>%
+        bind_cols(
+          lyrs_checked %>%
+            as.list() %>% as.tibble())
+    }) %>%
+    arrange(Source, Layer) %>%
+    select(-lyr)
+
+  datatable(
+    lyrs_ter_tbl,
+    caption = "Existence of ocean use layers across regions.",
+    options = list(
+      pageLength = nrow(lyrs_ter_tbl),
+      dom=c(
+        html_document = 'lftir',
+        pdf_document  = 't',
+        word_document = 't')[[fmt]],
+      ordering=c(
+        html_document = TRUE,
+        pdf_document  = FALSE,
+        word_document = FALSE)[[fmt]]))
 }

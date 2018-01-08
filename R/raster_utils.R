@@ -72,9 +72,9 @@ r_map <- function(r, aggregate_factor=10){
 #' @return return leaflet map
 #' @export
 ply_to_tifs <- function(x, y, ter, lyr, field="one", by=NA, sfx="epsg4326.tif"){
-  
+
   #x=ply; y=ter_depth_wgcs_r; ter; key=lyr; field=lyr_p$field; by=lyr_p$by; sfx="epsg4326.tif"
-  dir_lyr <- glue::glue("{dir_prep_data}/{lyr}")
+  dir_lyr <- glue::glue("{dir_lyrs}/{lyr}")
   dir.create(lyr, showWarnings=F)
   pfx <- glue::glue("{ter}_{lyr}")
   lyr_info <- get_lyr_info(lyr)
@@ -87,25 +87,29 @@ ply_to_tifs <- function(x, y, ter, lyr, field="one", by=NA, sfx="epsg4326.tif"){
     return(NULL)
   }
 
+  # TODO: consider 0-1 for % of cell, try volex for raster operations
+  # TODO: points for tide
+  if (lyr == "tide")
+    browser()
   r <- fasterize::fasterize(x, y, field=field, fun="first", by=by)
 
   if (!is.null(by)){
     tifs <- glue("{pfx}_{names(r)}_{sfx}")
     for (i in 1:length(tifs)){ # i <- 3
       component <- names(r)[i]
-      cat(glue::glue("    Writing: {tifs[i]}"), "\n")
-      
+      msg(g("    Writing: {tifs[i]}"))
+
       raster::writeRaster(raster(r, component), file.path(dir_lyr, tifs[i]), overwrite=T) # r[[lyr]] # plot(raster(r, lyr))
     }
-    
+
     lyr_info$territories[[ter]]$components <- setNames(tifs, names(r)) %>% as.list()
     set_lyr_info(lyr_info)
   } else {
     tif <- glue::glue("{pfx}_{sfx}")
-    cat(glue::glue("    Writing: {tif}"))
-    
+    msg(g("    Writing: {tif}"))
+
     raster::writeRaster(r, file.path(dir_lyr, tif), overwrite=T)
-    
+
     lyr_info$territories[[ter]]$components <- setNames(tif, lyr) %>% as.list()
     set_lyr_info(lyr_info)
   }
@@ -123,3 +127,6 @@ raster_trim <- function(r){
   raster::crop(r, extent_notna)
 }
 
+raster_project_leaflet_nearest <- function(x){
+  raster::projectRaster(x, raster::projectExtent(x, crs = sp::CRS(leaflet:::epsg3857), method="ngb"))
+}

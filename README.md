@@ -25,6 +25,7 @@ devtools::use_package("leaflet")
 devtools::use_package("ggsn")
 devtools::use_package("rasterVis")
 devtools::use_package("yaml")
+devtools::use_package("lwgeom")
 ```
 
 ## data
