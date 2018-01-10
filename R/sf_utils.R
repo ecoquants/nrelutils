@@ -94,9 +94,11 @@ sf_intersection <- function(x, y){
   }
 
   msg("    Intersecting")
+  # TODO: SLOW! So switch to sf_intersects() to quickly get sliced features
+  #       and later rely on raster masking to narrow down to territory
   x <- sf::st_intersection(x, y)
 
-  # TODO: check for dominant geometry type for casting
+  # check for dominant geometry type for casting
   geom_type <- sf::st_geometry_type(x) %>%
     table() %>% sort() %>% rev() %>% names() %>% .[1]
   if (geom_type %in% c("POLYGON", "MULTIPOLYGON")){

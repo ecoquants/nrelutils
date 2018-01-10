@@ -70,7 +70,11 @@ ter_stack <- function(ter, lyr_params){
     tifs               <- purrr::map_chr(
       lyr_info$territories[[ter]]$components,
       ~glue::glue("{dir_lyrs}/{lyr}/{.x[1]}"))
-    s_lyr              <- raster::stack(tifs)
+
+    if (lyr == "oceanuseatlas.hi" & ter == "Hawaii") browser("TODO: extend all to depth r")
+    #r_a <- fasterize::fasterize(x, y, field=field, fun="first", by=by)
+
+    s_lyr <- raster::stack(tifs)
     if (length(lyrs_in_ter[[lyr]]) == 1 && lyr == lyrs_in_ter[[lyr]]){
       names(s_lyr) <- lyr
     } else {
@@ -264,13 +268,14 @@ print_ter_bin_lyr_smry_plus <- function(tbl_blsp){
         th(colspan=5, HTML(glue("Area (km<sup>2</sup>) by {bin_html}")))),
       tr(
         th("Category"),
+        th("Dataset"),
         th("Layer"),
-        th("Component"),
         th_bins,
         th("Rank")))))
 
   i_tbl <<- i_tbl + 1
-  caption <- HTML(glue('Table {i_tbl}: Area (km<sup>2</sup>) of Ocean Use by {bin_html} bin for {ter} region. Width of gray horizontal bars from left of cell indicate percent area occupied in given depth bin.'))
+  caption <- HTML(glue('Table {i_tbl}: Area (km<sup>2</sup>) of Ocean Use by {bin_html} bin for {ter} region.
+                       Width of gray horizontal bars from left of cell indicate percent area occupied in given {bin_html} bin.'))
 
   tbl_blsp %>%
     select(-one_of(glue("{bins}"))) %>%
@@ -646,41 +651,40 @@ prep_lyr_ter <- function(lyr_p, lyr_ply, ter){
     ter_eez_wgcs_sf  <- get_ter_eez_wgcs_sf(ter)  # ply_map(ter_eez_wgcs_sf, "territory")
 
     # check if any intersection
-    lyr_inx <- sf_intersects(lyr_ply, ter_eez_wgcs_sf)
-    if (nrow(lyr_inx) == 0){
+    ply <- sf_intersects(lyr_ply, ter_eez_wgcs_sf)
+    if (nrow(ply) == 0){
       lyr_info$territories[[ter]] <- NA
       set_lyr_info(lyr_info)
       return(NULL)
     }
 
-    # intersect with eez and wrap
+    # save ter lyr
     lyr_ter_geo <- glue::glue("{dir_lyrs}/{lyr}/{ter}_{lyr}_epsg4326.geojson")
     if (!file.exists(lyr_ter_geo)){
-      ply <- sf_intersection(lyr_ply, ter_eez_wgcs_sf)
-      write_sf(ply, lyr_ter_geo)
+       # ply <- sf_intersection(lyr_ply, ter_eez_wgcs_sf) # SLOW!
+       write_sf(ply, lyr_ter_geo)
     } else {
-      ply <- read_sf(lyr_ter_geo)
+       ply <- read_sf(lyr_ter_geo)
     }
 
-    if (nrow(ply) == 0){
-      lyr_info$territories[[ter]] <- NA
-      set_lyr_info(lyr_info)
-    } else {
+    # if (nrow(ply) == 0){
+    #   lyr_info$territories[[ter]] <- NA
+    #   set_lyr_info(lyr_info)
+    # } else {
 
-      # TODO: write lyr_info: components=paths
-
-      # modify as needed
-      if (!is.na(lyr_p$mod_eval)){
-        ply <- eval(parse(text=lyr_p$mod_eval)) # ply_map(ply)
-      }
-
-      # get depth
-      ter_depth_wgcs_r <- get_ter_depth_wgcs_r(ter) # r_map(ter_depth_wgcs_r)
-
-      # convert to raster tif(s)
-      ply_to_tifs(ply, ter_depth_wgcs_r, ter, lyr, field=lyr_p$field, by=lyr_p$by)
+    # modify as needed
+    if (!is.na(lyr_p$mod_eval)){
+      ply <- eval(parse(text=lyr_p$mod_eval)) # ply_map(ply)
     }
+
+    # get depth
+    ter_depth_wgcs_r <- get_ter_depth_wgcs_r(ter) # r_map(ter_depth_wgcs_r)
+
+    # convert to raster tif(s)
+    ply_to_tifs(ply, ter_depth_wgcs_r, ter, lyr, field=lyr_p$field, by=lyr_p$by)
+
   }
+  #}
 }
 
 set_ter_info <- function(ter_info){
@@ -887,6 +891,7 @@ make_ter_info <- function(ter, lyr_params, bins){
     }
   }
   missing_types  <- setdiff(types, names(ter_info))
+  missing_types <- "wind" # TEMP: hard coded for new nrel bins
 
   # temp add map figures
   # msg("    TEMP update map figures")
@@ -968,18 +973,18 @@ dt_lyrs_ter <- function(lyr_params){
 
       tibble(
         Source = lyr_p$source,
-        lyr    = lyr,
-        Layer  = lyr_p$title) %>%
+        lyr     = lyr,
+        Dataset = lyr_p$title) %>%
         bind_cols(
           lyrs_checked %>%
             as.list() %>% as.tibble())
     }) %>%
-    arrange(Source, Layer) %>%
+    arrange(Source, Dataset) %>%
     select(-lyr)
 
   datatable(
     lyrs_ter_tbl,
-    caption = "Existence of ocean use layers across regions.",
+    caption = "Existence of ocean use datasets across regions.",
     options = list(
       pageLength = nrow(lyrs_ter_tbl),
       dom=c(
@@ -989,5 +994,8 @@ dt_lyrs_ter <- function(lyr_params){
       ordering=c(
         html_document = TRUE,
         pdf_document  = FALSE,
-        word_document = FALSE)[[fmt]]))
+        word_document = FALSE)[[fmt]],
+      autoWidth = TRUE,
+      columnDefs = list(
+        list(className = 'dt-center', targets = 2:(ncol(lyrs_ter_tbl))))))
 }

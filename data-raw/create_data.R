@@ -16,9 +16,9 @@ nrel_limits <- list(
       min = 0,
       max = 200)),
   wind = list(
-    breaks = c(7, 8.5, 10, Inf),
-    break_labels = c("7 - 8.5", "8.5 - 10", ">10"),
+    breaks = c(7, 8, 9, Inf),
+    break_labels = c("7", "8", ">9"),
     depth = list(
       min = 0,
       max = 1000)))
-devtools::use_data(nrel_limits)
+devtools::use_data(nrel_limits, overwrite = T)

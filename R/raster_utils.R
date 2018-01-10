@@ -89,9 +89,30 @@ ply_to_tifs <- function(x, y, ter, lyr, field="one", by=NA, sfx="epsg4326.tif"){
 
   # TODO: consider 0-1 for % of cell, try volex for raster operations
   # TODO: points for tide
-  if (lyr == "tide")
-    browser()
+  if (lyr == "tide") browser()
+  #browser()
+  msg(g("    fasterize(..., {ter}, {lyr}, field={field}, by={by}"))
+  # x_geo <- "/Users/bbest/github/nrel-uses/data/layers/oceanuseatlas.orwa/_oceanuseatlas.orwa_epsg4326.geojson"
+  # x <- read_sf(x_geo)
+  # y <- get_ter_depth_wgcs_r("Hawaii")
+  # field <- "score"; by <- "layer"
+  # r_a <- fasterize::fasterize(x %>% filter(layer=="Aquaculture"), y, field=field, fun="first")
+  # r_a_t <- raster_trim(r_a)
+  # r_a_t_u <- raster_unwrap(r_a_t)
+  # leaflet() %>% addProviderTiles("Stamen.TonerLite") %>% addRasterImage(r_a_t_u)
+  # s <- fasterize::fasterize(x, y, field=field, fun="first", by=by)
+  # names(s)
+  # r_satu <- raster(s, "Aquaculture") %>% raster_trim() %>% raster_unwrap()
+  # leaflet() %>% addProviderTiles("Stamen.TonerLite") %>% addRasterImage(r_satu)
+  # r_a <- raster("/Users/bbest/github/nrel-uses/data/layers/oceanuseatlas.hi/Hawaii_oceanuseatlas.hi_Aquaculture_epsg4326.tif")
+  # r_atu <- r_a %>% raster_trim() %>% raster_unwrap()
+  # leaflet() %>% addProviderTiles("Stamen.TonerLite") %>% addRasterImage(r_atu)
+
   r <- fasterize::fasterize(x, y, field=field, fun="first", by=by)
+
+  # mask by depth
+  r <- raster::mask(r, y)
+  #r <- raster_trim(r) # made all NA?
 
   if (!is.null(by)){
     tifs <- glue("{pfx}_{names(r)}_{sfx}")
