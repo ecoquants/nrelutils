@@ -71,7 +71,7 @@ ter_stack <- function(ter, lyr_params){
       lyr_info$territories[[ter]]$components,
       ~glue::glue("{dir_lyrs}/{lyr}/{.x[1]}"))
 
-    if (lyr == "oceanuseatlas.hi" & ter == "Hawaii") browser("TODO: extend all to depth r")
+    #if (lyr == "oceanuseatlas.hi" & ter == "Hawaii") browser("TODO: extend all to depth r")
     #r_a <- fasterize::fasterize(x, y, field=field, fun="first", by=by)
 
     s_lyr <- raster::stack(tifs)
@@ -890,8 +890,9 @@ make_ter_info <- function(ter, lyr_params, bins){
       missing_layers <- setdiff(missing_layers, lyr)
     }
   }
-  missing_types  <- setdiff(types, names(ter_info))
-  missing_types <- "wind" # TEMP: hard coded for new nrel bins
+  missing_types <- setdiff(types, names(ter_info))
+  # TEMP: hard coded for new nrel bins
+  if (get_fmt()=="html_document") missing_types <- "wind"
 
   # temp add map figures
   # msg("    TEMP update map figures")
